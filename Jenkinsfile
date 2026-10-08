@@ -133,7 +133,7 @@ pipeline {
                                 credentialsId: 'sonarqube-token', 
                                 variable: 'SONARQUBE_TOKEN'
                                 )]) {
-                            sh "./mvnw -f ${directory}/pom.xml sonar:sonar -Dsonar.login=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
+                            sh "./mvnw -f ${directory}/pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar -Dsonar.token=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
                         }
 
                         sh "./mvnw -f ${directory}/pom.xml org.owasp:dependency-check-maven:13.0.0:check -Dformat=HTML,XML -DfailBuildOnCVSS=11"
