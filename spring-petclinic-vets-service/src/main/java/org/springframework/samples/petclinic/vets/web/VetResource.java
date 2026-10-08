@@ -47,3 +47,5 @@ class VetResource {
         return vetRepository.findAll();
     }
 }
+
+// Test CI pipeline 1
