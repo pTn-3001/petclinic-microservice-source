@@ -32,3 +32,4 @@ record PetRequest(int id,
 ) {
 
 }
+// Test release tag 1.0.0
