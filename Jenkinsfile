@@ -101,13 +101,21 @@ pipeline {
             }
             post {
                 always {
+                    // Test results: "Test Result" page + trend chart on the build page
                     junit(
                         testResults: '**/target/surefire-reports/*.xml',
                         allowEmptyResults: true
                     )
-                    
+ 
+                    // Coverage: "Coverage Report" page + trend chart (JaCoCo plugin)
+                    jacoco(
+                        execPattern: '**/target/jacoco.exec',
+                        classPattern: '**/target/classes',
+                        sourcePattern: '**/src/main/java'
+                    )
+ 
                     archiveArtifacts(
-                        artifacts: '**/target/site/jacoco/*.html',
+                        artifacts: '**/target/site/jacoco/*.html, **/target/site/jacoco/jacoco.xml',
                         allowEmptyArchive: true
                     )
                 }
@@ -139,7 +147,7 @@ pipeline {
                             sh "./mvnw -f ${directory}/pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar -Dsonar.token=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
                         }
 
-                        sh "./mvnw -f ${directory}/pom.xml org.owasp:dependency-check-maven:13.0.0:check -DautoUpdate=false -Dformats=HTML,XML -DfailBuildOnCVSS=11"
+                        sh "./mvnw -B -ntp -f ${directory}/pom.xml org.owasp:dependency-check-maven:13.0.0:check -DautoUpdate=false -Dformat=ALL -DfailBuildOnCVSS=11"
                     }
                 }
             }
