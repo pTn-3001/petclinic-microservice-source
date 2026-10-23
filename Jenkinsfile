@@ -471,7 +471,7 @@ pipeline {
                             cd deploy-repo
                             mkdir -p envs/${targetEnv}
                             if [ ! -f "${targetFile}" ]; then
-                                echo "services:" > "${targetFile}"
+                                echo "services: {}" > "${targetFile}"
                             fi
                         """
 
@@ -485,9 +485,9 @@ import yaml, os
 file_path = "${targetFile}"
 with open(file_path, "r") as f:
     data = yaml.safe_load(f) or {}
-if "services" not in data:
+if not isinstance(data.get("services"), dict):
     data["services"] = {}
-if "${svc}" not in data["services"]:
+if not isinstance(data["services"].get("${svc}"), dict):
     data["services"]["${svc}"] = {}
 data["services"]["${svc}"]["enabled"] = True
 data["services"]["${svc}"]["tag"] = "${env.IMAGE_TAG}"
