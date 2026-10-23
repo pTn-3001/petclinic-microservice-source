@@ -12,76 +12,6 @@ def serviceDirs() {
     ]
 }
 
-// Render a rich HTML dashboard summary onto the Jenkins build status page and echo to console log
-def updateBuildDashboard() {
-    def servicesList = (env.DETECTED_SERVICES ?: '').split(',').findAll { it.trim() }
-    if (!servicesList) {
-        currentBuild.description = "<b>No services selected for build.</b>"
-        echo "[BUILD DASHBOARD] No application services require a build."
-        return
-    }
-
-    def stripHtml = { str -> str ? str.replaceAll('<[^>]*>', '').trim() : '' }
-
-    def rows = ''
-    def consoleRows = ''
-
-    servicesList.each { svc ->
-        def cov = fileExists("target/.metrics/${svc}-coverage.txt") ? readFile("target/.metrics/${svc}-coverage.txt").trim() : '<i>Pending...</i>'
-        def sonar = fileExists("target/.metrics/${svc}-sonar.txt") ? readFile("target/.metrics/${svc}-sonar.txt").trim() : '<i>Pending...</i>'
-        def owasp = fileExists("target/.metrics/${svc}-owasp.txt") ? readFile("target/.metrics/${svc}-owasp.txt").trim() : '<i>Pending...</i>'
-        def trivy = fileExists("target/.metrics/${svc}-trivy.txt") ? readFile("target/.metrics/${svc}-trivy.txt").trim() : '<i>Pending...</i>'
-
-        rows += """
-        <tr>
-            <td style="padding: 8px 12px; font-weight: bold; border: 1px solid #dee2e6;">${svc}</td>
-            <td style="padding: 8px 12px; border: 1px solid #dee2e6;">${cov}</td>
-            <td style="padding: 8px 12px; border: 1px solid #dee2e6;">${sonar}</td>
-            <td style="padding: 8px 12px; border: 1px solid #dee2e6;">${owasp}</td>
-            <td style="padding: 8px 12px; border: 1px solid #dee2e6;">${trivy}</td>
-        </tr>"""
-
-        def covText = stripHtml(cov)
-        def sonarText = fileExists("target/.metrics/${svc}-sonar.txt") ? 'Configured' : 'Pending'
-        def owaspText = stripHtml(owasp)
-        def trivyText = stripHtml(trivy)
-
-        consoleRows += String.format("  %-22s | %-12s | %-14s | %-20s | %-18s\n", svc, covText, sonarText, owaspText, trivyText)
-    }
-
-    currentBuild.description = """
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; margin: 10px 0;">
-        <div style="margin-bottom: 8px;">
-            <b>Branch:</b> <code>${env.BRANCH_NAME ?: 'N/A'}</code> | 
-            <b>Commit:</b> <code>${env.SHORT_SHA ?: 'N/A'}</code> | 
-            <b>Tag:</b> <code>${env.IMAGE_TAG ?: 'N/A'}</code>
-        </div>
-        <table style="border-collapse: collapse; width: 100%; max-width: 850px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <thead>
-                <tr style="background-color: #f1f3f5; color: #495057; text-align: left;">
-                    <th style="padding: 8px 12px; border: 1px solid #dee2e6;">Service</th>
-                    <th style="padding: 8px 12px; border: 1px solid #dee2e6;">🧪 Test Coverage</th>
-                    <th style="padding: 8px 12px; border: 1px solid #dee2e6;">🔍 SonarQube</th>
-                    <th style="padding: 8px 12px; border: 1px solid #dee2e6;">🛡️ OWASP CVEs</th>
-                    <th style="padding: 8px 12px; border: 1px solid #dee2e6;">🐳 Trivy Scan</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${rows}
-            </tbody>
-        </table>
-    </div>"""
-
-    echo """
-========================================================================================================
- [BUILD DASHBOARD] Metrics Summary (Branch: ${env.BRANCH_NAME ?: 'N/A'} | Tag: ${env.IMAGE_TAG ?: 'N/A'})
---------------------------------------------------------------------------------------------------------
-  Service                | Coverage     | SonarQube      | OWASP CVEs           | Trivy Scan        
---------------------------------------------------------------------------------------------------------
-${consoleRows}========================================================================================================
-"""
-}
-
 pipeline {
     agent {
         label 'built-in'
@@ -156,7 +86,6 @@ pipeline {
                         path.startsWith('.mvn/') ||
                         path == 'mvnw' ||
                         path == 'mvnw.cmd' ||
-                        path == 'Jenkinsfile' ||
                         path == 'Dockerfile' ||
                         path == 'docker-compose.yml' ||
                         path.startsWith('docker/') ||
@@ -164,8 +93,9 @@ pipeline {
                         path.startsWith('scripts/')
                     }
 
-                    // Documentation and IDE/repository meta files safe to ignore (no build required)
+                    // Documentation, pipeline definition, and IDE/repository meta files safe to ignore (no service build required)
                     def isDocumentation = { path ->
+                        path == 'Jenkinsfile' ||
                         path == 'README.md' ||
                         path == 'LICENSE' ||
                         path == 'CONTRIBUTING.md' ||
@@ -221,8 +151,6 @@ pipeline {
                         echo 'No application services require a build.'
                     } else {
                         echo "Services selected: ${env.DETECTED_SERVICES}"
-                        sh 'rm -rf target/.metrics && mkdir -p target/.metrics'
-                        updateBuildDashboard()
                     }
                 }
             }
@@ -244,37 +172,23 @@ pipeline {
 
                         sh "./mvnw -pl ${directory} -am org.jacoco:jacoco-maven-plugin:prepare-agent test org.jacoco:jacoco-maven-plugin:report"
 
-                        // Extract JaCoCo test coverage percentage
-                        def coverageFile = "${directory}/target/site/jacoco/index.html"
-                        def coverageText = 'N/A'
-
-                        if (fileExists(coverageFile)) {
-                            def coverageHtml = sh(
-                                script: """
-                                    grep -o -E 'Total</td><td class="bar">[^<]*</td><td>[0-9]+%' "${coverageFile}" 2>/dev/null | grep -o -E '[0-9]+%' | head -1 || echo ""
-                                """,
-                                returnStdout: true
-                            ).trim()
-
-                            if (coverageHtml) {
-                                def coverage = coverageHtml.replace('%', '').toFloat() / 100
-                                coverageText = "${Math.round(coverage * 100)}%"
-                            }
-                        } else if (fileExists("${directory}/target/site/jacoco/jacoco.csv")) {
-                            coverageText = sh(
-                                script: """
+                        // Extract JaCoCo test coverage percentage directly via shell to keep Blue Ocean steps clean
+                        def coverageText = sh(
+                            script: """
+                                if [ -f "${directory}/target/site/jacoco/index.html" ]; then
+                                    cov=\$(grep -o -E 'Total</td><td class="bar">[^<]*</td><td>[0-9]+%' "${directory}/target/site/jacoco/index.html" 2>/dev/null | grep -o -E '[0-9]+%' | head -1)
+                                    echo "\${cov:-N/A}"
+                                elif [ -f "${directory}/target/site/jacoco/jacoco.csv" ]; then
                                     awk -F, 'NR>1 {m+=\$4; c+=\$5} END {t=m+c; if(t>0) printf "%d%%", (c/t)*100; else print "N/A"}' "${directory}/target/site/jacoco/jacoco.csv" 2>/dev/null || echo "N/A"
-                                """,
-                                returnStdout: true
-                            ).trim()
-                        }
+                                else
+                                    echo "N/A"
+                                fi
+                            """,
+                            returnStdout: true
+                        ).trim()
 
-                        echo ">> [TEST COVERAGE] Service: ${service} -> ${coverageText}"
-                        writeFile file: "target/.metrics/${service}-coverage.txt", text: coverageText
+                        echo "[TEST COVERAGE] ${service}: ${coverageText}"
                     }
-
-                    // Refresh Jenkins UI dashboard with test coverage metrics
-                    updateBuildDashboard()
                 }
             }
             post {
@@ -328,44 +242,27 @@ pipeline {
                             sh "./mvnw -f ${directory}/pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar -Dsonar.token=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
                         }
 
-                        // Record SonarQube dashboard link for Jenkins UI
                         def sonarUrl = "${SONAR_HOST_URL}/dashboard?id=${directory}"
-                        writeFile file: "target/.metrics/${service}-sonar.txt", text: "<a href='${sonarUrl}' target='_blank' style='color:#1a73e8;text-decoration:none;'>Dashboard ↗</a>"
-                        echo ">> [SONARQUBE] Service: ${service} -> ${sonarUrl}"
+                        echo "[SONARQUBE] ${service}: ${sonarUrl}"
 
                         // Run OWASP Dependency-Check to identify known CVE vulnerabilities in dependencies
                         sh "./mvnw -B -ntp -f ${directory}/pom.xml org.owasp:dependency-check-maven:13.0.0:check -DautoUpdate=false -Dformat=ALL -DfailBuildOnCVSS=11"
 
                         // Extract OWASP vulnerability counts from JSON report
-                        def owaspJson = "${directory}/target/dependency-check-report.json"
-                        def owaspText = '0 issues'
-                        def rawOwasp = '0 vulnerabilities'
+                        def owaspSummary = sh(
+                            script: """
+                                if [ -f "${directory}/target/dependency-check-report.json" ]; then
+                                    count=\$(jq '[.dependencies[]?.vulnerabilities[]?] | length' "${directory}/target/dependency-check-report.json" 2>/dev/null || echo "0")
+                                    echo "\${count} vulnerabilities"
+                                else
+                                    echo "Completed"
+                                fi
+                            """,
+                            returnStdout: true
+                        ).trim()
 
-                        if (fileExists(owaspJson)) {
-                            def vulnCount = sh(
-                                script: """
-                                    jq '[.dependencies[]?.vulnerabilities[]?] | length' "${owaspJson}" 2>/dev/null || echo "0"
-                                """,
-                                returnStdout: true
-                            ).trim()
-
-                            rawOwasp = "${vulnCount} vulnerabilities"
-                            if (vulnCount && vulnCount != '0') {
-                                owaspText = "<span style='color:#d93025;font-weight:bold;'>${vulnCount} vulnerabilities</span>"
-                            } else {
-                                owaspText = "<span style='color:#188038;'>0 vulnerabilities</span>"
-                            }
-                        } else {
-                            owaspText = "Completed"
-                            rawOwasp = "Completed"
-                        }
-
-                        echo ">> [OWASP DEPENDENCY-CHECK] Service: ${service} -> ${rawOwasp}"
-                        writeFile file: "target/.metrics/${service}-owasp.txt", text: owaspText
+                        echo "[OWASP DEPENDENCY-CHECK] ${service}: ${owaspSummary}"
                     }
-
-                    // Refresh Jenkins UI dashboard with SonarQube and OWASP findings
-                    updateBuildDashboard()
                 }
             }
             post {
@@ -410,6 +307,10 @@ pipeline {
                                 docker login \
                                 -u "$DOCKERHUB_USERNAME" \
                                 --password-stdin
+
+                            for i in 1 2 3; do
+                                docker pull eclipse-temurin:17 && break || (echo "Retrying base image pull ($i/3)..." && sleep 3)
+                            done
                         '''
 
                         services.each { service ->
@@ -417,14 +318,20 @@ pipeline {
 
                             echo "Building Docker image for service: ${service}"
 
-                            // Build the Docker image via Maven Spring Boot buildDocker profile
-                            sh "./mvnw clean install -pl ${directory} -am -P buildDocker -Ddocker.image.prefix=${DOCKERHUB_USERNAME}"
+                            // Build the Docker image via Maven Spring Boot buildDocker profile (with retry on transient network/EOF errors)
+                            sh """
+                                for i in 1 2 3; do
+                                    ./mvnw clean install -pl ${directory} -am -P buildDocker -Ddocker.image.prefix=${DOCKERHUB_USERNAME} && break || {
+                                        if [ "\$i" -eq 3 ]; then exit 1; fi
+                                        echo "Retrying Maven Docker build for ${service} (\$i/3)..."
+                                        sleep 3
+                                    }
+                                done
+                            """
 
                             // Define the Docker image repository and versioned tag
                             def imageName = "${DOCKERHUB_USERNAME}/${directory}"
                             def taggedImageName = "${imageName}:${env.IMAGE_TAG}"
-
-                            echo "Pushing image: ${taggedImageName}"
 
                             // Tag the local image with the computed version tag
                             sh "docker tag ${imageName}:latest ${taggedImageName}"
@@ -433,50 +340,54 @@ pipeline {
                             sh "trivy image --exit-code 0 --format json --output trivy-report-${service}.json ${taggedImageName}"
 
                             // Extract Trivy vulnerabilities summary (Critical and High)
-                            def trivyJson = "trivy-report-${service}.json"
-                            def trivyText = 'Scanned'
+                            def trivySummary = sh(
+                                script: """
+                                    if [ -f "trivy-report-${service}.json" ]; then
+                                        crit=\$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "trivy-report-${service}.json" 2>/dev/null || echo 0)
+                                        high=\$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "trivy-report-${service}.json" 2>/dev/null || echo 0)
+                                        echo "Critical: \${crit}, High: \${high}"
+                                    else
+                                        echo "Scanned"
+                                    fi
+                                """,
+                                returnStdout: true
+                            ).trim()
 
-                            def rawTrivy = 'Scanned'
-                            if (fileExists(trivyJson)) {
-                                def crit = sh(
-                                    script: "jq '[.Results[]?.Vulnerabilities[]? | select(.Severity==\"CRITICAL\")] | length' ${trivyJson} 2>/dev/null || echo 0",
-                                    returnStdout: true
-                                ).trim()
-                                def high = sh(
-                                    script: "jq '[.Results[]?.Vulnerabilities[]? | select(.Severity==\"HIGH\")] | length' ${trivyJson} 2>/dev/null || echo 0",
-                                    returnStdout: true
-                                ).trim()
-
-                                rawTrivy = "Critical: ${crit}, High: ${high}"
-                                if (crit != '0' || high != '0') {
-                                    trivyText = "<span style='color:#d93025;font-weight:bold;'>Crit: ${crit}, High: ${high}</span>"
-                                } else {
-                                    trivyText = "<span style='color:#188038;'>0 Crit, 0 High</span>"
-                                }
-                            }
-
-                            echo ">> [TRIVY CONTAINER SCAN] Service: ${service} -> ${rawTrivy}"
-                            writeFile file: "target/.metrics/${service}-trivy.txt", text: trivyText
+                            echo "[TRIVY CONTAINER SCAN] ${service} (${taggedImageName}): ${trivySummary}"
 
                             // Push the versioned Docker image to Docker Hub (skip for Pull Request builds)
                             if (!env.CHANGE_ID) {
-                                sh "docker push ${taggedImageName}"
+                                echo "Pushing image: ${taggedImageName}"
+                                sh """
+                                    for i in 1 2 3; do
+                                        docker push ${taggedImageName} && break || {
+                                            if [ "\$i" -eq 3 ]; then exit 1; fi
+                                            echo "Retrying docker push for ${taggedImageName} (\$i/3)..."
+                                            sleep 3
+                                        }
+                                    done
+                                """
 
                                 // If building on main branch without a release tag, also publish as latest
                                 if (env.BRANCH_NAME == 'main' && !env.TAG_NAME) {
                                     def latestImageName = "${imageName}:latest"
                                     echo "Pushing image: ${latestImageName}"
-                                    sh "docker tag ${taggedImageName} ${latestImageName}"
-                                    sh "docker push ${latestImageName}"
+                                    sh """
+                                        docker tag ${taggedImageName} ${latestImageName}
+                                        for i in 1 2 3; do
+                                            docker push ${latestImageName} && break || {
+                                                if [ "\$i" -eq 3 ]; then exit 1; fi
+                                                echo "Retrying docker push for ${latestImageName} (\$i/3)..."
+                                                sleep 3
+                                            }
+                                        done
+                                    """
                                 }
                             } else {
                                 echo "Pull Request build detected (CHANGE_ID=${env.CHANGE_ID}). Skipping Docker Hub push."
                             }
                         }
                     }
-
-                    // Refresh Jenkins UI dashboard with Trivy scan results
-                    updateBuildDashboard()
                 }
             }
             post {
@@ -490,7 +401,7 @@ pipeline {
             }
         }
 
-        stage('Update Deployment Repository') {
+        stage('Update GitOps') {
             when {
                 allOf {
                     expression { return env.DETECTED_SERVICES?.trim() || env.TAG_NAME?.trim() }
@@ -591,9 +502,6 @@ with open(file_path, "w") as f:
 
     post {
         always {
-            script {
-                updateBuildDashboard()
-            }
             echo "Build #${BUILD_NUMBER} finished."
         }
         
