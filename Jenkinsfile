@@ -289,8 +289,7 @@ pipeline {
                     jacoco(
                         execPattern: '**/target/jacoco.exec',
                         classPattern: '**/target/classes',
-                        sourcePattern: '**/src/main/java',
-                        allowEmptyResults: true
+                        sourcePattern: '**/src/main/java'
                     )
  
                     // Archive JaCoCo HTML reports and XML coverage summary artifacts
@@ -374,8 +373,7 @@ pipeline {
                     // Publish OWASP Dependency-Check report to Jenkins UI
                     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                         dependencyCheckPublisher(
-                            pattern: '**/target/dependency-check-report.xml',
-                            allowEmptyResults: true
+                            pattern: '**/target/dependency-check-report.xml'
                         )
                     }
 
