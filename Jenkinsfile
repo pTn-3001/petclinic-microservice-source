@@ -49,16 +49,20 @@ pipeline {
                         // For release tags, all microservices must be built and released together
                         changedFiles = []
                         echo "Release tag detected: build all services."
-                    } else if (env.BRANCH_NAME == 'main') {
-                        // Recent commit on main: verify whether a parent commit exists to safely handle root commits
-                        def hasParent = sh(
-                            script: 'git rev-parse --verify HEAD^ >/dev/null 2>&1',
+                    } else if (env.CHANGE_ID) {
+                        // Pull Request build: if Jenkins created a merge commit with target branch (HEAD^1), diff against HEAD^1; otherwise diff against origin/main
+                        def isMergeCommit = sh(
+                            script: 'git rev-parse --verify HEAD^2 >/dev/null 2>&1',
                             returnStatus: true
                         ) == 0
 
-                        def diffCommand = hasParent
-                            ? 'git diff --name-only HEAD^ HEAD'
-                            : 'git diff-tree --root --no-commit-id --name-only -r HEAD'
+                        def diffCommand
+                        if (isMergeCommit) {
+                            diffCommand = 'git diff --name-only HEAD^1 HEAD'
+                        } else {
+                            sh 'git fetch origin +refs/heads/main:refs/remotes/origin/main'
+                            diffCommand = 'git diff --name-only origin/main...HEAD'
+                        }
 
                         def diffOutput = sh(
                             script: diffCommand,
@@ -67,11 +71,36 @@ pipeline {
 
                         changedFiles = diffOutput ? diffOutput.readLines().findAll { it.trim() } : []
                     } else {
-                        // Feature branch or PR: compare against the merge-base with origin/main
-                        sh 'git fetch origin main'
+                        // Branch push (main or dev/*): compare current commit (HEAD) with previous commit on the SAME branch
+                        def hasParent = sh(
+                            script: 'git rev-parse --verify HEAD^ >/dev/null 2>&1',
+                            returnStatus: true
+                        ) == 0
+
+                        def prevCommit = env.GIT_PREVIOUS_COMMIT?.trim()
+                        def usePrevCommitOnMain = false
+
+                        // On main, if multiple commits were merged before Jenkins ran (coalesced build), include all commits since last build
+                        if (env.BRANCH_NAME == 'main' && prevCommit && prevCommit != env.GIT_SHA) {
+                            usePrevCommitOnMain = sh(
+                                script: "git cat-file -e ${prevCommit}^{commit} >/dev/null 2>&1",
+                                returnStatus: true
+                            ) == 0
+                        }
+
+                        def diffCommand
+                        if (usePrevCommitOnMain) {
+                            echo "Comparing current commit (${env.SHORT_SHA}) with previous build commit (${prevCommit.take(8)}) on branch main"
+                            diffCommand = "git diff --name-only ${prevCommit} HEAD"
+                        } else if (hasParent) {
+                            echo "Comparing current commit (${env.SHORT_SHA}) with previous commit (HEAD^) on branch ${env.BRANCH_NAME}"
+                            diffCommand = 'git diff --name-only HEAD^ HEAD'
+                        } else {
+                            diffCommand = 'git diff-tree --root --no-commit-id --name-only -r HEAD'
+                        }
 
                         def diffOutput = sh(
-                            script: 'git diff --name-only origin/main...HEAD',
+                            script: diffCommand,
                             returnStdout: true
                         ).trim()
 
