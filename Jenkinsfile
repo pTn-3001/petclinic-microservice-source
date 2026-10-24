@@ -204,11 +204,11 @@ pipeline {
                         // Extract JaCoCo test coverage percentage directly via shell to keep Blue Ocean steps clean
                         def coverageText = sh(
                             script: """
-                                if [ -f "${directory}/target/site/jacoco/index.html" ]; then
-                                    cov=\$(grep -o -E 'Total</td><td class="bar">[^<]*</td><td>[0-9]+%' "${directory}/target/site/jacoco/index.html" 2>/dev/null | grep -o -E '[0-9]+%' | head -1)
+                                if [ -f "${directory}/target/site/jacoco/jacoco.csv" ]; then
+                                    awk -F, 'NR>1 {m+=\$4; c+=\$5} END {t=m+c; if(t>0) printf "%d%%", (c/t)*100; else print "0%"}' "${directory}/target/site/jacoco/jacoco.csv" 2>/dev/null || echo "N/A"
+                                elif [ -f "${directory}/target/site/jacoco/index.html" ]; then
+                                    cov=\$(grep -o -E 'Total</td><td class="bar">[^<]*</td><td class="ctr2">[0-9]+%' "${directory}/target/site/jacoco/index.html" 2>/dev/null | grep -o -E '[0-9]+%' | head -1)
                                     echo "\${cov:-N/A}"
-                                elif [ -f "${directory}/target/site/jacoco/jacoco.csv" ]; then
-                                    awk -F, 'NR>1 {m+=\$4; c+=\$5} END {t=m+c; if(t>0) printf "%d%%", (c/t)*100; else print "N/A"}' "${directory}/target/site/jacoco/jacoco.csv" 2>/dev/null || echo "N/A"
                                 else
                                     echo "N/A"
                                 fi
@@ -261,14 +261,14 @@ pipeline {
 
                         echo "Running static analysis for service: ${service}"
 
-                        // Run SonarQube code quality scan
+                        // Run SonarQube code quality scan (explicitly set projectKey to match dashboard URL)
                         withCredentials([
                             string(
                                 credentialsId: 'sonarqube-token', 
                                 variable: 'SONARQUBE_TOKEN'
                             )
                         ]) {
-                            sh "./mvnw -f ${directory}/pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar -Dsonar.token=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
+                            sh "./mvnw -f ${directory}/pom.xml org.sonarsource.scanner.maven:sonar-maven-plugin:5.5.0.6356:sonar -Dsonar.projectKey=${directory} -Dsonar.projectName=${directory} -Dsonar.token=\$SONARQUBE_TOKEN -Dsonar.host.url=${SONAR_HOST_URL}"
                         }
 
                         def sonarUrl = "${SONAR_HOST_URL}/dashboard?id=${directory}"
